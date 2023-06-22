@@ -29,7 +29,7 @@ import com.example.todoappdb.ui.viewmodels.TasksViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
-    tasksViewModel: TasksViewModel = viewModel()
+    tasksViewModel: TasksViewModel = viewModel(factory = TasksViewModel.Factory)
 ) {
     val navController = rememberNavController()
     val uiState by tasksViewModel.mainScreenUiState.collectAsState()

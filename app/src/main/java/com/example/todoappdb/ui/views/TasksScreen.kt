@@ -81,7 +81,7 @@ fun TaskEntry(
                 }
                 Text(text = task.name)
             }
-            Checkbox(checked = task.isImportant, onCheckedChange = onCompletedChange)
+            Checkbox(checked = task.isCompleted, onCheckedChange = onCompletedChange)
         }
     }
 }

@@ -1,25 +1,43 @@
 package com.example.todoappdb.ui.viewmodels
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.navigation.NavController
 import com.example.todoappdb.R
+import com.example.todoappdb.TaskApplication
 import com.example.todoappdb.data.Task
+import com.example.todoappdb.data.TaskDao
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
-class TasksViewModel : ViewModel() {
+class TasksViewModel(
+    private val taskDao: TaskDao,
+    private val savedStateHandle: SavedStateHandle,
+    ) : ViewModel() {
 
     private var _mainScreenUiState: MutableStateFlow<MainScreenUiState> = MutableStateFlow(
         MainScreenUiState()
     )
     val mainScreenUiState: StateFlow<MainScreenUiState> = _mainScreenUiState.asStateFlow()
 
-    private var _taskScreenUiState: MutableStateFlow<TaskScreenUiState> = MutableStateFlow(
-        TaskScreenUiState()
-    )
-    val taskScreenUiState: StateFlow<TaskScreenUiState> = _taskScreenUiState.asStateFlow()
+    val taskScreenUiState: StateFlow<TaskScreenUiState> =
+        taskDao.getAllTasks().map { TaskScreenUiState(it) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000L),
+                initialValue = TaskScreenUiState()
+            )
 
     private var _insertEditUiState: MutableStateFlow<InsertEditScreenUiState> = MutableStateFlow(
         InsertEditScreenUiState()
@@ -43,20 +61,9 @@ class TasksViewModel : ViewModel() {
     }
 
     fun onTaskIsCompletedChange(updatedTask: Task, newTaskCompletion: Boolean) {
-        val allTasksTemp = _taskScreenUiState.value.allTasks.toMutableList()
-        var taskPos = -1
-        allTasksTemp.forEachIndexed { index, task ->
-            if (task == updatedTask) {
-                taskPos = index
-            }
-        }
-        allTasksTemp.removeAt(index = taskPos)
-        allTasksTemp.add(
-            index = taskPos,
-            element = updatedTask.copy(isCompleted = newTaskCompletion)
-        )
-        _taskScreenUiState.update { currentState ->
-            currentState.copy(allTasks = allTasksTemp.toList())
+        val task = updatedTask.copy(isCompleted = newTaskCompletion)
+        viewModelScope.launch {
+            taskDao.update(task)
         }
     }
 
@@ -68,7 +75,7 @@ class TasksViewModel : ViewModel() {
     }
 
     private fun navigateToInsertEditTask(navController: NavController) {
-        if(editTask){
+        if (editTask) {
             _mainScreenUiState.update { currentState ->
                 currentState.copy(
                     screenName = "Edit Task",
@@ -81,7 +88,7 @@ class TasksViewModel : ViewModel() {
                     isImportant = taskToEdit.isImportant,
                 )
             }
-        }else{
+        } else {
             _mainScreenUiState.update { currentState ->
                 currentState.copy(
                     screenName = "Create New Task",
@@ -94,34 +101,22 @@ class TasksViewModel : ViewModel() {
 
     private fun navigateToTaskList(navController: NavController) {
         if (editTask) {
-            val allTasksTemp = _taskScreenUiState.value.allTasks.toMutableList()
-            var taskPos = -1
-            allTasksTemp.forEachIndexed { index, task ->
-                if (task == taskToEdit) {
-                    taskPos = index
-                }
-            }
-            allTasksTemp.removeAt(index = taskPos)
-            allTasksTemp.add(
-                index = taskPos,
-                element = taskToEdit.copy(
-                    name = insertEditScreenUiState.value.taskName,
-                    isImportant = insertEditScreenUiState.value.isImportant
-                )
+            val task = taskToEdit.copy(
+                name = insertEditScreenUiState.value.taskName,
+                isImportant = insertEditScreenUiState.value.isImportant
             )
-            _taskScreenUiState.update { currentState ->
-                currentState.copy(allTasks = allTasksTemp.toList())
+            viewModelScope.launch {
+                taskDao.update(task)
             }
             editTask = false
             taskToEdit = Task()
         } else {
-            _taskScreenUiState.update { currentState ->
-                currentState.copy(
-                    allTasks = currentState.allTasks + Task(
-                        name = insertEditScreenUiState.value.taskName,
-                        isImportant = insertEditScreenUiState.value.isImportant,
-                    )
-                )
+            val task = Task(
+                name = insertEditScreenUiState.value.taskName,
+                isImportant = insertEditScreenUiState.value.isImportant,
+            )
+            viewModelScope.launch {
+                taskDao.insert(task)
             }
         }
         _insertEditUiState.update { currentState ->
@@ -133,20 +128,20 @@ class TasksViewModel : ViewModel() {
         _mainScreenUiState.update { currentState ->
             currentState.copy(screenName = "Task List", fabIcon = R.drawable.baseline_add_24)
         }
-        navController.navigate("task_list"){
-            popUpTo("task_list"){
+        navController.navigate("task_list") {
+            popUpTo("task_list") {
                 inclusive = true
             }
         }
     }
 
-    fun editTask(task: Task, navController: NavController){
+    fun editTask(task: Task, navController: NavController) {
         editTask = true
         taskToEdit = task
         navigateToInsertEditTask(navController)
     }
 
-    fun navigateBack(navController: NavController){
+    fun navigateBack(navController: NavController) {
         editTask = false
         taskToEdit = Task()
         _insertEditUiState.update { currentState ->
@@ -160,4 +155,21 @@ class TasksViewModel : ViewModel() {
         }
         navController.popBackStack()
     }
+
+    companion object {
+        val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(
+                modelClass: Class<T>,
+                extras: CreationExtras,
+            ): T {
+                val application = checkNotNull(extras[APPLICATION_KEY])
+                val saveStateHandler = extras.createSavedStateHandle()
+                return TasksViewModel(
+                    (application as TaskApplication).database.taskDao(),
+                    saveStateHandler
+                ) as T
+            }
+        }
+    }
+
 }
